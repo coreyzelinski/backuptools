@@ -1,0 +1,10 @@
+#
+# Optional RDBMS connection strings for mysql-backup.sh
+#
+# For security reasons, this file should only be readable by the user executing the backup script (e.g., root).
+#
+
+[client]
+host = localhost
+user = root
+

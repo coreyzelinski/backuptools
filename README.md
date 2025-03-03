@@ -1,2 +1,224 @@
 # backuptools
 Assorted backup scripts, tools and utils
+
+## Cron
+
+Set up a cron job for running nightly backups by creating a `/etc/cron.d/backup` file with the following contents:
+
+    # Run backups nightly
+    MAILTO=you@example.com
+    5 0 * * * root /usr/local/sbin/backup.sh
+
+For more details about customizing your backups, see the information below.
+
+## Usage
+
+Typically, you'll want to run the backup script as root so it has access to all the files.
+Do it with sudo:
+
+    sudo backup.sh
+
+You can customize the script's behavior with a variety of command-line options.
+(In most cases it's easier to edit the config file instead, though.)
+
+    Usage: backup.sh [options]
+
+    backup.sh is a simple tool for backing up files and MySQL databases.
+
+    Options:
+      -o OUTPUT_DIR, --output-dir=OUTPUT_DIR
+                             Base directory in which to store backups.
+                             (Default: '/var/backup')
+      -d DIRS, --dirs=DIRS   Directories to back up.
+                             (Default: '/var/www /etc/apache2 /etc/php5 /var/log')
+      -e PATTERNS, --exclude=PATTERNS
+                             Exclude files matching these patterns.
+                             (Default: 'core *~')
+      -c FILE, --mysql-conf=FILE
+                             A MySQL config file with connection information.
+                             (Default: '/usr/local/etc/mysql-connection.cfg')
+      -s FILE, -s3-conf=FILE An s3cmd config file with connection info for Amazon S3.
+                             (Default: '/root/.s3cfg')
+      -p S3_PATH, --s3-path=S3_PATH
+                             The Amazon S3 path to copy files to (ex. s3://my-bucket/my-folder/).
+      --do-files             Back up and compress files. (Enabled by default.)
+      --no-files             Don't back up and compress files.
+      --do-mysql             Back up MySQL databases. (Enabled by default.)
+      --no-mysql             Don't back up MySQL databases.
+      --do-s3                Copy backups to Amazon S3. Enabled by default if S3 is configured.
+      --no-s3                Don't copy backups to Amazon S3.
+      --do-rotate            Rotate old backups. (Enabled by default.)
+      --no-rotate            Don't rotate old backups.
+      -q, --quiet            Quiet
+      -v, --verbose          Verbose
+      --help                 Print this help screen
+
+
+## Configuration
+
+### Customizing backup configuration
+
+To customize the backup configuration, edit [/usr/local/etc/backup.conf](etc/backup.conf).
+This file is optional, and if it doesn't exist, sensible defaults will be used.
+
+See the comments in the config file for details about the options available.
+
+### Configuring the MySQL connection
+
+You can supply MySQL login information on the command line, but to run the backup script automatically via cron you'll need to store connection information securely in a config file.
+
+Add the connection information for the MySQL user that will perform the backup in `/usr/local/etc/mysql-connection.cnf`. Make sure this file is readable only by root to prevent exposing your secret login information.
+
+    cd /usr/local/etc
+    sudo chown root:root mysql-connection.cnf
+    sudo chmod 0600 mysql-connection.cnf
+    sudo vim mysql-connection.cnf
+
+Example mysql-connection.cnf file:
+
+    [client]
+    host = localhost
+    user = root
+    password = MySuPeRsEcReTrOoTpAsSwOrD
+
+
+### Configuring Amazon S3
+
+It's possible to configure backup to store a copy of the backups on [Amazon S3](http://aws.amazon.com/s3/).
+
+First, install the `s3cmd` package and its dependencies. On Ubuntu or Debian, do it like this:
+
+    sudo yum install s3cmd python-magic
+
+Configure s3cmd, providing it with your access keys.
+Make sure to run this with sudo,
+to ensure that the generated config file is protected with suitable permissions
+(it should be readable only by root).
+
+    sudo s3cmd --configure -c /root/.s3cfg
+
+Enter your AWS key and secret when prompted. Accept defaults for the other values.
+
+Then specify the S3 path to store your backups in.
+Edit the following value in `/usr/local/etc/backup.conf`:
+
+    S3_PATH=s3://my-bucket/my-folder/
+
+Make sure the path ends with a slash (/).
+
+
+### Setting up a cron job to run nightly backups
+
+Run backups nightly by setting up a cron job like the following.
+
+    sudo vim /etc/cron.d/backup
+
+Sample cron file to run backups nightly at 5 minutes after midnight,
+and send an email report to you@example.com:
+
+    # Run backups nightly
+    MAILTO=you@example.com
+    5 0 * * * root /usr/local/sbin/backup.sh
+
+## Backup rotation
+
+**backup** automatically deletes old backups, to prevent filling up disk space.
+
+### Default rotation
+
+By default, the most recent two weeks of daily backups are kept.
+
+Twelve monthly backups (the backup taken on the first day of the month) are kept locally,
+and monthly backups are kept forever on Amazon S3.
+
+Only one backup is kept for each day (the most recent one).
+
+### Configuring backup rotation
+
+The default rotation schedule can be changed by editing [/usr/local/etc/backup.conf](etc/backup.conf).
+
+There are separate config options for locally stored backups and backups stored on Amazon S3.
+
+Set `KEEP_NUM_RECENT` to the number of recent backups to keep on the local system.
+Typically this will be the number of days of recent backups to keep,
+unless you set `KEEP_ONE_PER_DAY` to 0.
+Set `KEEP_NUM_RECENT=-1` to keep all (i.e. never delete old backups).
+
+Set `KEEP_NUM_MONTHLIES` to the number of monthly backups to keep on the local system.
+A monthly backup is just a backup taken on the first day of the month.
+This allows you to keep historical snapshots over a long period of time,
+without using a ton of disk space.
+Set `KEEP_NUM_MONTHLIES=-1` to keep all monthly backups.
+
+Backup rotation on Amazon S3 is configured the same way,
+but the option names start with `S3_`,
+ex. `S3_KEEP_NUM_RECENT` and `S3_KEEP_NUM_MONTHLIES`.
+
+### Disk space considerations
+
+Backup rotation should be configured in such a way that you have enough backups around to recover anything you might need,
+but that you never keep so many backups you risk running out of disk space.
+
+To estimate the amount of disk space that will be needed,
+first determine the size of a single backup.
+The following command shows the size of each backup in the `/var/backup` directory:
+
+    du -sh /var/backup/*
+
+If all future backups are the same size as your latest backup,
+calculating the amount of disk space required by your rotation strategy is as simple as this:
+
+    (BACKUP_SIZE * KEEP_NUM_RECENT) + (BACKUP_SIZE * KEEP_NUM_MONTHLY)
+
+If the required disk space won't leave you with a comfortable amount of free space,
+adjust your configuration accordingly.
+Keep in mind that the size of your backups is likely to grow over time.
+
+A summary of disk usage is shown at the end of the report each time a backup is run.
+Check this periodically to make sure that disk space won't become an issue.
+
+### Rotating backups independently
+
+While backup rotation is typically done automatically when `backup.sh` is run,
+you can also do a backup rotation independently by running
+`/usr/local/sbin/backup-rotate.sh`.
+
+When run independently, `backup-rotate.sh`
+prompts you for confirmation before deleting anything,
+showing you a list of what would be deleted and what would be kept.
+You can disable this prompt with the `--force` argument.
+Run `backup-rotate.sh --help` for a complete list of arguments.
+
+## Restoring from backups
+
+Backups are stored as tar/gzip archives, with one for each backed up directory, and one for the MySQL dumps.
+File permissions are set so that backups are only readable by the user who ran the backup script (typically root).
+
+To see the contents of an archive:
+
+    sudo tar tzvf $BACKUPDIR/etc_php5.tgz
+
+To extract the archive:
+
+    sudo tar xzvf $BACKUPDIR/etc_php5.tgz
+
+To extract a single file from an archive (ex. php.ini):
+
+    sudo tar xzvf $BACKUPDIR/etc_php5.tgz ./etc/php5/apache2/php.ini
+
+The MySQL databases are stored in SQL files created by mysqldump, with one file per database.
+All of these files are zipped up into a single `mysqldump.tgz` archive.
+
+To restore a database named "mydb":
+
+    sudo tar xzvf $BACKUPDIR/mysqldump.tgz
+    cd mysqldump
+    mysqladmin -uroot -p create mydb
+    mysql -uroot -p mydb < mydb.sql
+
+You could also restore the tables from the "mydb" database into a temporary database (ex. "mydbtemp"),
+for review or manipulation before overwriting any existing data.
+
+    mysqladmin -uroot -p create mydbtemp
+    mysql -uroot -p mydbtemp < mydb.sql
+
