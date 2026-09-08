@@ -3,7 +3,8 @@
 #bash shell scripts for setting up backups on S3 service
 #PATH=
 
-read -p "Enter your root mysql password" mysqlpwd
+read -s -p "Enter your root mysql password" mysqlpwd
+printf '\n'
 read -p "Enter your s3 folder path ie my-bucket/my-folder/" s3path
 MPWD="$mysqlpwd"
 S3PTH="$s3path"
@@ -17,8 +18,8 @@ sudo chmod 0600 $INSTALL_DIR/etc/mysql-connection.cnf
 sudo chmod a+x $INSTALL_DIR/sbin/backup*.sh $INSTALL_DIR/sbin/mysql-backup.sh
 rm -rf backup-master backup.zip
 cd /usr/local/etc
-echo 'password = ${MPWD}' >> mysql-connection.cnf
-echo 'S3_PATH=s3://${S3PTH}' >> backup.conf
+printf 'password = %s\n' "$MPWD" >> mysql-connection.cnf
+printf 'S3_PATH=s3://%s\n' "$S3PTH" >> backup.conf
 yum install s3cmd python-magic && sudo s3cmd --configure -c /root/.s3cfg
 
 exit 0
