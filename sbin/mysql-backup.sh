@@ -52,7 +52,7 @@ fi
 #
 
 # We need OPTS as the `eval set --' would nuke the return value of getopt.
-OPTS=`getopt -o qu:h:P:p::v::o:c: --long help,quiet,user:,host:,port:,password::,verbose::,output:,defaults-extra-file: -n $THIS_SCRIPT -- "$@"`
+OPTS=`getopt -o qu:h:P:p::v::o:c:s: --long help,quiet,user:,host:,port:,password::,verbose::,output:,defaults-extra-file:,skip-dbs: -n $THIS_SCRIPT -- "$@"`
 if [ $? != 0 ] ; then usage >&2 ; exit 1 ; fi
 eval set -- "$OPTS"
 while true; do
@@ -76,7 +76,7 @@ while true; do
             # an empty parameter will be generated if its optional
             # argument is not found.
             MYSQL_PASS=$2;
-            if [ -z $MYSQL_PASS ]; then
+            if [ -z "$MYSQL_PASS" ]; then
                 NEED_MYSQL_PASS="y"
             fi
             shift 2
@@ -116,9 +116,9 @@ if [ -z "$OUTPUT_DIR" ]; then
     exit 1;
 fi
 
-OUTPUT_DIR=$(readlink -f $OUTPUT_DIR) # Convert into an absolute path, if necessary
-if [ ! -d $OUTPUT_DIR ]; then echo "Output directory '$OUTPUT_DIR' does not exist."; exit 1; fi
-if [ ! -w $OUTPUT_DIR ]; then echo "Output directory '$OUTPUT_DIR' is not writeable."; exit 1; fi
+OUTPUT_DIR=$(readlink -f "$OUTPUT_DIR") # Convert into an absolute path, if necessary
+if [ ! -d "$OUTPUT_DIR" ]; then echo "Output directory '$OUTPUT_DIR' does not exist."; exit 1; fi
+if [ ! -w "$OUTPUT_DIR" ]; then echo "Output directory '$OUTPUT_DIR' is not writeable."; exit 1; fi
 
 # Create MySQL connection arguments
 MYSQL_CONN_ARGS=''
@@ -130,23 +130,29 @@ if [ -n "$MYSQL_PORT" ]; then MYSQL_CONN_ARGS="$MYSQL_CONN_ARGS -P$MYSQL_PORT"; 
 
 # Test connecting to MySQL server
 if [ "$VERBOSE" -ge 2 ]; then echo "Testing connection to MySQL server"; fi
-MYSQL_PWD=$MYSQL_PASS $MYSQLADMIN $MYSQL_CONN_ARGS status >/dev/null
+MYSQL_PWD="$MYSQL_PASS" $MYSQLADMIN $MYSQL_CONN_ARGS status >/dev/null
 if [ $? != 0 ] ; then echo "Aborting."; exit 1 ; fi
 
 # if [ "$VERBOSE" -ge 1 ]; then echo "Writing dump files to $OUTPUT_DIR..."; fi
 
 # Get list of dbs
 if [ "$VERBOSE" -ge 2 ]; then echo "Getting database list"; fi
-dbs=$(MYSQL_PWD=$MYSQL_PASS $MYSQL $MYSQL_CONN_ARGS --batch --skip-column-names -e 'SHOW DATABASES')
+if ! dbs=$(MYSQL_PWD="$MYSQL_PASS" $MYSQL $MYSQL_CONN_ARGS --batch --skip-column-names -e 'SHOW DATABASES'); then
+    echo "Error: unable to list databases. Aborting." >&2
+    exit 1
+fi
+
+ERROR=0
 for db in $dbs; do
     if [ `in_array $db "${SKIP_DBS[@]}"` ]; then continue; fi
-    if [ "$VERBOSE" -ge 1 ]; then echo "Dumping database '$db' to $OUTPUT_DIR/$db.sql"; fi
+    dumpfile="$OUTPUT_DIR/$db.sql"
+    if [ "$VERBOSE" -ge 1 ]; then echo "Dumping database '$db' to $dumpfile"; fi
 
     #tables=$($MYSQL --batch --skip-column-names $MYSQL_CONN_ARGS -e "SHOW TABLES FROM $db")
     # Determine if this database has any non-InnoDB tables.
     # If so, we need to get a read lock.
 
-    non_innodb_tables=$(MYSQL_PWD=$MYSQL_PASS $MYSQL $MYSQL_CONN_ARGS --batch --skip-column-names -e "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA='$db' AND ENGINE != 'InnoDB'");
+    non_innodb_tables=$(MYSQL_PWD="$MYSQL_PASS" $MYSQL $MYSQL_CONN_ARGS --batch --skip-column-names -e "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA='$db' AND ENGINE != 'InnoDB'");
     if [ ! -z "$non_innodb_tables" ]; then
         if [ "$VERBOSE" -ge 2 ]; then echo "  Database contains non-InnoDB tables. Acquiring read lock."; fi
         LOCK_ARGS="--lock-tables"
@@ -155,9 +161,18 @@ for db in $dbs; do
     fi
 
     mysql_cmd="$MYSQLDUMP $MYSQL_CONN_ARGS --ignore-table=mysql.event --opt $LOCK_ARGS $db"
-    if [ "$VERBOSE" -ge 2 ]; then echo "  Executing command: $mysql_cmd >$OUTPUT_DIR/$db.sql"; fi
-    MYSQL_PWD=$MYSQL_PASS $mysql_cmd >$OUTPUT_DIR/$db.sql
+    if [ "$VERBOSE" -ge 2 ]; then echo "  Executing command: $mysql_cmd >$dumpfile"; fi
+    if ! MYSQL_PWD="$MYSQL_PASS" $mysql_cmd >"$dumpfile"; then
+        echo "Error: mysqldump failed for database '$db'." >&2
+        rm -f "$dumpfile"
+        ERROR=1
+    fi
 done
+
+if [ "$ERROR" -ge 1 ]; then
+    echo "Database backup completed with errors." >&2
+    exit 1
+fi
 
 if [ "$VERBOSE" -ge 1 ]; then echo "Database backup complete."; fi
 exit 0
