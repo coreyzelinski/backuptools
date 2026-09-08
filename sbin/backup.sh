@@ -65,12 +65,12 @@ fi
 #
 
 # We need OPTS as the `eval set --' would nuke the return value of getopt.
-OPTS=`getopt -o o:d:e:c:s:p:qv --long help,quiet,verbose,output:,dirs:,exclude:,mysql-conf:,s3-conf:,s3-path:,do-files,no-files,do-mysql,no-mysql,do-rotate,no-rotate,do-s3,no-s3 -n $THIS_SCRIPT -- "$@"`
+OPTS=`getopt -o o:d:e:c:s:p:qv --long help,quiet,verbose,output-dir:,dirs:,exclude:,mysql-conf:,s3-conf:,s3-path:,do-files,no-files,do-mysql,no-mysql,do-rotate,no-rotate,do-s3,no-s3 -n $THIS_SCRIPT -- "$@"`
 if [ $? != 0 ] ; then usage >&2 ; exit 1 ; fi
 eval set -- "$OPTS"
 while true; do
     case "$1" in
-        -o|--output) OUTPUT_BASE_DIR="$2"; shift 2 ;;
+        -o|--output-dir) OUTPUT_BASE_DIR="$2"; shift 2 ;;
         -d|--dirs) DIRS="$2"; shift 2 ;;
         -e|--exclude) EXCLUDE_PATTERNS="$2"; shift 2 ;;
         -c|--mysql-conf) MYSQL_CONF="$2"; shift 2 ;;
@@ -174,18 +174,21 @@ if [ "$DO_FILES" -gt 0 ]; then
         echo "------------------";
     fi
 
-    exclude_ops=""
+    exclude_ops=()
     for exclude in $EXCLUDE_PATTERNS; do
-        exclude_ops="$exclude_ops --exclude='$exclude'"
+        exclude_ops+=("--exclude=$exclude")
     done
 
     for dir in $DIRS; do
         tarfile=$fullpath/$(echo $dir | tr '/' '_' | sed -r 's/^_//').tgz
         if [ "$VERBOSE" -ge 1 ]; then echo "Backing up $dir to $tarfile"; fi
 
-        cmd="$TAR czfp $tarfile $exclude_ops -C / .${dir}"
-        if [ "$VERBOSE" -ge 2 ]; then echo "  Executing command: $cmd"; fi
-        $cmd
+        if [ "$VERBOSE" -ge 2 ]; then
+            printf '  Executing command: %q' "$TAR"
+            printf ' %q' czfp "$tarfile" "${exclude_ops[@]}" -C / ".${dir}"
+            echo
+        fi
+        "$TAR" czfp "$tarfile" "${exclude_ops[@]}" -C / ".${dir}"
         if [ "$?" -ge 1 ]; then
             ERROR=1
         fi
