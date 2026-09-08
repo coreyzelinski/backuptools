@@ -231,8 +231,8 @@ if [ "$DO_ROTATE_S3" -gt 0 ]; then
         if [ -z "$(echo $dir | egrep -o 'backup_20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*')" ]; then
             if [ "$VERBOSE" -ge 2 ]; then
                 echo "Skipping $fullpath because it does not have the format of a backup directory name."
-                continue;
             fi
+            continue
         fi
 
         datepart=${dir:7:10}
